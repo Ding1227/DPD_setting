@@ -1,0 +1,22 @@
+timestep	0.05
+comm_modify cutoff 2 vel yes
+
+# potential information
+mass 1 1
+mass 2 1
+mass 3 1
+mass 4 1
+
+bond_style harmonic
+bond_coeff 1 2 0
+
+pair_style	dpd 1.0 1.7 34387 #T cutoff seed
+pair_coeff	* * 10.6188 1 # aij and gamma
+pair_coeff	1 2	14.8688 1 # aij and gamma
+pair_coeff	1 3	10.8009 1 # aij and gamma
+pair_coeff	1 4	11.9516 1 # aij and gamma
+pair_coeff	2 3	13.2899 1 # aij and gamma
+pair_coeff	2 4	20.9628 1 # aij and gamma
+pair_coeff	3 4	13.1205 1 # aij and gamma
+
+special_bonds 	lj/coul 1 0 0

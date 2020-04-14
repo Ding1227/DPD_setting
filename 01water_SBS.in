@@ -1,0 +1,116 @@
+variable folder 	index 	01water_SBSoutput
+variable jumpname 	index	SELF
+shell mkdir ${folder}
+log  log01water_SBS.lammps
+
+## DPD parameter conversion
+## 1. physical unit length in A
+
+variable R_leng equal 14.238 # DPD unit length to real physical length 
+variable R_vol equal ${R_leng}^3 # DPD unit volume to physical volume
+variable DPDbead_vol equal ${R_vol}/3 # DPD number density = 3
+variable R_rcut equal (${DPDbead_vol}*3/(4*3.1415926))^(1/3) #DPD rcut in real physical length
+variable DPDbead_waterNo equal 5 # the volume of a water molecule is 30 A**3
+variable solvent_weight equal 84.1620 # temperature
+variable number_chain equal 1 # the number of SBS chain that you deposit 
+variable solvent_ratio equal 9 # Solvent divided by solute
+variable temperature equal 300 # temperature
+
+### the following are parameters obtained from the above
+
+variable aij equal (1.4870*${DPDbead_waterNo}-1)/(2*3*0.101)
+print "####aij: ${aij} "
+variable rcut equal ${R_rcut}/${R_leng} # rcut in DPD unit
+variable boltz equal 1.38064852e-23 #Boltzmann factor in unit of m**2 kg s-2 K-1
+variable bead_weight equal ${DPDbead_waterNo}*${solvent_weight}/(6.02214086e23*1000) # Kg
+variable R_Time equal sqrt(${bead_weight}*(${R_leng}*1e-10)^2/(${boltz}*${temperature}))*1e9 #nano sec
+variable box_length equal round(((12207.304*8*${number_chain}*${solvent_ratio}/420.81+192*${number_chain})/3)^(1/3)) # caculate how many solvent we need
+variable N_Temp equal 1/300*${temperature} # caculate how many solvent we need
+
+# print the physical parameter out for further check
+shell cd ${folder}
+print "1. Physical Unit length(A):  ${R_leng}" file 00Phyical_Para.dat
+print "2. Physical Unit Vol(A**3):  ${R_vol}" append 00Phyical_Para.dat
+print "3. Physical Vol(A**3) of a DPD bead:  ${DPDbead_vol}" append 00Phyical_Para.dat
+print "4. Physical rcut length(A):  ${R_rcut}" append 00Phyical_Para.dat
+print "5. DPD rcut (dimensionless) : ${rcut}" append 00Phyical_Para.dat
+print "6. Water number per DPD bead: ${DPDbead_waterNo}" append 00Phyical_Para.dat
+print "7. Repulsive parameter aij: ${aij}" append 00Phyical_Para.dat
+print "8. Physical Unit time(ns): ${R_Time}" append 00Phyical_Para.dat
+shell cd ..
+
+units		lj
+atom_style	full
+boundary p p p
+#atom_style	dpd
+
+# create simulation box
+variable nx equal ${box_length}
+variable ny equal ${box_length}
+variable nz equal ${box_length}
+variable totalDPDbead equal 3*${nx}*${ny}*${nz}-192*${number_chain} #number density is 3
+region		mybox block 0 ${nx} 0 ${ny} 0 ${nz} units box
+create_box	4 mybox bond/types 1 angle/types 0 dihedral/types 0 improper/types 0 extra/bond/per/atom 20 extra/angle/per/atom 20 extra/dihedral/per/atom 20 extra/improper/per/atom 20 extra/special/per/atom 20## need to be modified
+create_atoms 1 random ${totalDPDbead} 123456 mybox
+include		all_data.in		#forcefield parameters
+
+# change neighbor list parameters to avoid dangerous builds
+neighbor	2.0 bin
+neigh_modify delay 10 every 5
+#comm_modify cutoff 2 vel yes
+
+#deposit
+molecule SBS SBS.mol
+fix 2 all deposit ${number_chain} 0 1 123456 region mybox mol SBS near 0.1 attempt 100
+run ${number_chain}                                                                                 
+unfix 2
+
+#minimize
+thermo		100
+min_style cg
+minimize 0 0 1000 1000
+write_data after_01water_SBS_equil.data nocoeff
+
+###################################Velocity#################################################
+velocity all 	create ${N_Temp} 12345 mom yes rot yes dist gaussian   # 溫度在300k時 隨機產生一個速度   線性動量跟角動量為0
+velocity all 	scale ${N_Temp} #溫度為300
+thermo_style 	custom step temp pe etotal press vol density
+###################################NVT######################################################
+shell cd 		${folder}		#移資料夾
+write_data 		datanvt_0.data nocoeff
+reset_timestep 	0
+thermo 			1000	
+fix 			1 all nve
+dump 8  all 	custom 100000 nvt_*.cfg id type x y z xu yu zu mol
+dump_modify 8 	sort id
+run 			1000000 every 100000 "write_data datanvt_*.data nocoeff"
+unfix 			1
+undump 			8
+shell cd 		..	
+run 			0						
+write_data 		after_02NVT.data nocoeff
+################################Group########################################################
+group Water	molecule 0
+variable TotalSUM 		equal count(Water)	
+variable radius	  		equal 2
+variable tot_Water 		loop  ${TotalSUM}
+log  none
+#####設計Complex周圍為一個虛擬區域，選出沒碰到水的部分#######################################
+variable num string ""
+label forbiden
+variable x equal x[${tot_Water}]
+variable y equal y[${tot_Water}]
+variable z equal z[${tot_Water}]
+   region ${tot_Water} sphere ${x} ${y} ${z} ${radius} side out
+   variable num string '${num} ${tot_Water}'
+   
+next tot_Water                 
+jump ${jumpname} forbiden
+
+region complex intersect ${TotalSUM} ${num}
+#region out_complex intersect 2 wholebox complex ####虛擬區域
+#####刪除水還有沒碰到水的部分################################################################
+delete_atoms group Water
+delete_atoms region complex compress yes bond yes
+write_data 		after_03contact_area.data nocoeff
+print "******* ALL DONE ****"
